@@ -5,7 +5,7 @@ spring:
         registration:
           okta:
             assertingparty:
-              metadata-uri: https://dev-17700857.okta.com/app/exk9dn29foO7sxMqs5d7/sso/saml/metadata
+              metadata-uri: https://integrator-4503275.okta.com/app/exk16xjb4zdRijJvH698/sso/saml/metadata
             signing:
               credentials:
                 - private-key-location: classpath:local.key

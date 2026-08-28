@@ -1,72 +1,73 @@
-# Spring Boot, SAML, and Okta
+# Okta SAML + Inline Hook Demo
 
-A Spring Boot example app that shows how to implement single sign-on (SSO) with Spring Security's SAML and Okta.
+This project demonstrates a full login flow where a Java Spring Boot application initiates an Okta SAML login, and Okta validates the user through a custom SAML inline hook before returning the authentication response.
 
-Please read [Get Started with Spring Boot, SAML, and Okta][blog] to see how this app was created.
+The app uses:
 
-**Prerequisites:** 
+- Spring Boot 3 and Spring Security SAML 2 Service Provider
+- Okta as the SAML identity provider
+- A Node.js Express endpoint that acts as an Okta inline hook
+- A username-to-patient mapping that injects a custom `extPatientId` attribute into the SAML assertion
 
-- [SDKMAN](https://sdkman.io/) (for Java 17)
+## High-level flow
 
-> [Okta](https://developer.okta.com/) has Authentication and User Management APIs that reduce development time with instant-on, scalable user infrastructure. Okta's intuitive API and expert support make it easy for developers to authenticate, manage and secure users and roles in any application.
+```mermaid
+sequenceDiagram
+    participant User
+    participant SpringApp as Spring Boot App
+    participant Okta as Okta SAML IdP
+    participant Hook as Inline Hook Server
+    participant Users as users.js lookup table
 
-* [Getting Started](#getting-started)
-* [Links](#links)
-* [Help](#help)
-* [License](#license)
-
-## Getting Started
-
-To install this example application, run the following commands:
-
-```bash
-git clone https://github.com/oktadev/okta-spring-boot-saml-example.git
-cd okta-spring-boot-saml-example
+    User->>SpringApp: Visit http://localhost:8080
+    SpringApp->>Okta: Redirect to SAML login
+    Okta->>Hook: Invoke inline hook during SAML assertion processing
+    Hook->>Users: Lookup username to patient ID
+    Users-->>Hook: patient ID value
+    Hook-->>Okta: Patch assertion with extPatientId claim
+    Okta-->>SpringApp: SAML response
+    SpringApp->>User: Authenticated page with user attributes
 ```
 
-### Create a SAML App in Okta
+## What this project does
 
-To begin, you'll need an Okta developer account. You can create one at [developer.okta.com/signup](https://developer.okta.com/signup) or install the [Okta CLI](https://cli.okta.com) and run `okta register`.
+The Java application is the service provider. When a user visits the site, Spring Security redirects the user to Okta for SAML authentication.
 
-Then, log in to your account and go to **Applications** > **Create App Integration**. Select **SAML 2.0** and click **Next**. Name your app something like `Spring Boot SAML` and click **Next**.
+During that SAML assertion lifecycle, Okta calls the configured inline hook endpoint in [server.js](server.js). That hook:
 
-Use the following settings:
+- reads the user's login email from the Okta request body
+- looks up the user in [users.js](users.js)
+- injects a custom claim named `extPatientId` into the SAML assertion using the Okta assertion patch format
+- returns a JSON command that Okta applies to the assertion
 
-* Single sign on URL: `http://localhost:8080/login/saml2/sso/okta`
-* Use this for Recipient URL and Destination URL: ✅ (the default)
-* Audience URI: `http://localhost:8080/saml2/service-provider-metadata/okta`
+After the assertion is modified, the Spring application receives the SAML response and displays the authenticated user attributes on the home page.
 
-Then click **Next**. Select the following options:
+## Project structure
 
-* I'm an Okta customer adding an internal app
-* This is an internal app that we have created
+- [src/main/java/com/example/demo/SecurityConfiguration.java](src/main/java/com/example/demo/SecurityConfiguration.java) – Spring Security SAML configuration
+- [src/main/java/com/example/demo/HomeController.java](src/main/java/com/example/demo/HomeController.java) – displays the logged-in user and attributes
+- [src/main/resources/application.yml](src/main/resources/application.yml) – Okta SAML metadata and signing certificate configuration
+- [src/main/resources/templates/home.html](src/main/resources/templates/home.html) – authenticated user landing page
+- [server.js](server.js) – Express app that handles the Okta inline hook
+- [users.js](users.js) – sample user-to-patient ID mapping used by the hook
+- [build.gradle](build.gradle) – Java build and Spring Boot dependencies
+- [package.json](package.json) – Node.js dependency setup for the hook server
 
-Select **Finish**.
+## Prerequisites
 
-Okta will create your app, and you will be redirected to its **Sign On** tab. Scroll down to the **SAML Signing Certificates** and go to **SHA-2** > **Actions** > **View IdP Metadata**. You can right-click and copy this menu item's link or open its URL. Copy the resulting link to your clipboard. It should look something like the following:
+Before running the project, make sure you have:
 
-```
-https://dev-13337.okta.com/app/<random-characters>/sso/saml/metadata
-```
+- Java 17
+- Gradle or the Gradle wrapper included in the repo
+- Node.js 18+ and npm
+- An Okta developer org
+- A public HTTPS URL for the inline hook endpoint (for example, via ngrok)
 
-Go to your app's **Assignment** tab and assign access to the **Everyone** group.
+## Configuration
 
-### Create a SAML App in Auth0
+### 1) Java/Spring configuration
 
-[Sign up for an Auth0 account](https://auth0.com/signup) or [log in](https://auth0.com/api/auth/login?redirectTo=dashboard) with your existing one. Navigate to **Applications** > **Create Application** > **Regular Web Applications** > **Create**.
-
-Select the **Settings** tab and change the name to `Spring Boot SAML`. Add `http://localhost:8080/login/saml2/sso/auth0` as an **Allowed Callback URL**.
-
-Scroll to the bottom, expand **Advanced Settings**, and go to **Endpoints**. Copy the value of the **SAML Metadata URL**. Select **Save Changes**.
-
-Clone the `auth0` branch, which contains changes to look for Auth0 attributes instead of Okta attributes.
-
-```shell
-git clone -b auth0 https://github.com/oktadev/okta-spring-boot-saml-example.git
-cd okta-spring-boot-saml-example
-```
-
-Copy your **SAML Metadata URL** into `src/main/resources/application.yml`:
+The Spring app is configured in [src/main/resources/application.yml](src/main/resources/application.yml). Update the Okta metadata URL to match your Okta app:
 
 ```yaml
 spring:
@@ -74,37 +75,157 @@ spring:
     saml2:
       relyingparty:
         registration:
-          auth0:
+          okta:
             assertingparty:
-              metadata-uri: <your-auth0-metadata-uri>
-            ...
+              metadata-uri: https://your-okta-domain.okta.com/app/your-app-id/sso/saml/metadata
 ```
 
-### Run the App and Login
+The project also expects the local SAML signing certificate and private key in the classpath:
 
-Run your Spring Boot app from your IDE or using the command line:
+- [src/main/resources/local.crt](src/main/resources/local.crt)
+- [src/main/resources/local.key](src/main/resources/local.key)
 
-```shell
+If those files are missing, generate or replace them with a valid keypair for your app.
+
+### 2) Node inline hook configuration
+
+The custom hook server runs on port 3000 by default and listens on the `/SAMLHook` endpoint in [server.js](server.js).
+
+Create a `.env` file in the project root:
+
+```bash
+HOOK_AUTH_HEADER=Authorization
+HOOK_AUTH_SECRET=your-shared-secret
+PORT=3000
+```
+
+The secret must match the value configured in your Okta inline hook.
+
+### 3) User mapping
+
+Edit [users.js](users.js) to match the users that are allowed to receive a custom claim:
+
+```js
+const users = [
+  { username: 'user1@example.com', ExternalServicePatientID: 123456 },
+  { username: 'user2@example.com', ExternalServicePatientID: 1001 }
+];
+```
+
+The inline hook checks the user's login value from Okta and adds the patient ID claim only when the username exists in this list.
+
+## Okta setup
+
+### Create the SAML app
+
+In Okta:
+
+1. Go to Applications > Create App Integration
+2. Select SAML 2.0
+3. Name the app and complete the SAML form
+4. Set the Single sign-on URL to:
+
+```text
+http://localhost:8080/login/saml2/sso/okta
+```
+
+5. Set the Audience URI to:
+
+```text
+http://localhost:8080/saml2/service-provider-metadata/okta
+```
+
+6. Assign the app to users or groups
+7. Download the IdP metadata and copy the metadata URL into the Spring configuration
+
+### Configure the inline hook
+
+Create an inline hook in Okta for the SAML assertion pipeline.
+
+Set the endpoint to your public URL, for example:
+
+```text
+https://your-ngrok-id.ngrok-free.app/SAMLHook
+```
+
+Use the same shared secret value from your `.env` file and the `Authorization` header.
+
+The hook must return a patch command in the format used by Okta's assertion patch API, which is exactly what [server.js](server.js) does.
+
+## Run the project
+
+### 1) Install Node dependencies
+
+```bash
+npm install
+```
+
+### 2) Start the inline hook server
+
+```bash
+npm start
+```
+
+The server will listen on port 3000 by default.
+
+If you need a public URL for Okta, expose it using ngrok:
+
+```bash
+ngrok http 3000
+```
+
+### 3) Start the Spring Boot app
+
+From the project root:
+
+```bash
 ./gradlew bootRun
 ```
 
-Open `http://localhost:8080` in your favorite browser and log in with the credentials you used to create your account.
+Then open:
 
-You should see a successful result in your browser.
+```text
+http://localhost:8080
+```
 
-If you want to make the logout button work and display a user's attributes, please read the blog post. 
+You should be redirected to Okta for authentication. After successful login, the app displays the current user and available SAML attributes.
 
-## Links
+## Notes on the SAML assertion patch
 
-This example uses Spring Boot and [Spring Security SAML](https://docs.spring.io/spring-security/reference/servlet/saml2/login/index.html) to integrate with Okta and Auth0. 
+The custom inline hook adds the claim:
 
-## Help
+```json
+{
+  "type": "com.okta.assertion.patch",
+  "value": [
+    {
+      "op": "add",
+      "path": "/claims/extPatientId",
+      "value": {
+        "attributes": {
+          "NameFormat": "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified"
+        },
+        "attributeValues": [
+          {
+            "value": 123456
+          }
+        ]
+      }
+    }
+  ]
+}
+```
 
-Please post any questions as comments on the [blog post][blog], visit the [Okta Developer Forums](https://devforum.okta.com/), or talk to us on the [Auth0 Community Forums](https://community.auth0.com/).
+This custom claim is then available to the Spring service provider as part of the authenticated principal.
+
+## Troubleshooting
+
+- If Spring Boot fails to start, confirm Java 17 is active and `JAVA_HOME` is set correctly.
+- If the inline hook returns 401, verify the `Authorization` header value matches the secret in Okta and `.env`.
+- If Okta does not call the hook, confirm the endpoint is public and reachable over HTTPS.
+- If the assertion patch is not applied, verify the username exists in [users.js](users.js) and matches the Okta login field exactly.
 
 ## License
 
-Apache 2.0, see [LICENSE](LICENSE).
-
-[blog]: https://developer.okta.com/blog/2022/08/05/spring-boot-saml
+This project is distributed under the Apache 2.0 license. See [LICENSE](LICENSE) for details.
 
