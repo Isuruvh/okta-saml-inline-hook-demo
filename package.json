@@ -20,7 +20,7 @@
   },
   "homepage": "https://github.com/oktadev/okta-spring-boot-saml-example#readme",
   "dependencies": {
-    "body-parser": "^2.3.0",
+    "body-parser": "^2.4.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-validator": "^7.3.2"
